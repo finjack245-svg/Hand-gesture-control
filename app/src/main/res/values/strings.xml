@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Hand Gesture Control</string>
+    <string name="accessibility_description">Allows hand gestures to perform taps, swipes and navigation when enabled by the user.</string>
+</resources>
