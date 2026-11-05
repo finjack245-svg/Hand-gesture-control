@@ -24,7 +24,14 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           packages: platform-tools platforms;android-35 build-tools;35.0.0
-      - name: Download MediaPipe hand tracking model\n        run: |\n          mkdir -p app/src/main/assets\n          curl -L --fail --retry 3 \\\n            https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task \\\n            -o app/src/main/assets/hand_landmarker.task\n          test -s app/src/main/assets/hand_landmarker.task\n      - name: Build debug APK
+      - name: Download MediaPipe hand tracking model
+        run: |
+          mkdir -p app/src/main/assets
+          curl -L --fail --retry 3 \
+            https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task \
+            -o app/src/main/assets/hand_landmarker.task
+          test -s app/src/main/assets/hand_landmarker.task
+      - name: Build debug APK
         run: gradle --no-daemon assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
