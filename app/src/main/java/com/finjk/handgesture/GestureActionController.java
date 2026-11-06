@@ -3,7 +3,7 @@ package com.finjk.handgesture;
 import android.content.Context;
 import android.content.Intent;
 import android.media.AudioManager;
-import android.media.KeyEvent;
+import android.view.KeyEvent;
 import android.hardware.camera2.CameraManager;
 import android.os.Build;
 import android.provider.Settings;
