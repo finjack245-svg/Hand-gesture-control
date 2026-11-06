@@ -4,11 +4,10 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.Matrix;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.util.Size;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -18,29 +17,12 @@ import android.widget.Spinner;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ImageAnalysis;
-import androidx.camera.core.ImageProxy;
-import androidx.camera.core.Preview;
-import androidx.camera.lifecycle.ProcessCameraProvider;
-import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mediapipe.framework.image.BitmapImageBuilder;
-import com.google.mediapipe.tasks.core.BaseOptions;
-import com.google.mediapipe.tasks.vision.core.RunningMode;
-import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker;
-import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult;
-import com.google.mediapipe.tasks.components.containers.NormalizedLandmark;
-
-import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 public class MainActivity extends AppCompatActivity {
     private static final int CAMERA_REQUEST = 41;
+    private static final int OVERLAY_REQUEST = 42;
     private static final String PREFS = "gesture_mappings";
     private static final String[] ACTION_LABELS = {
             "Do nothing", "Go Back", "Go Home", "Recent Apps", "Notifications",
@@ -59,42 +41,24 @@ public class MainActivity extends AppCompatActivity {
             "Open palm", "Closed fist", "Peace sign", "Pointing finger", "Three fingers"
     };
 
-    private PreviewView previewView;
-    private TextView status;
-    private HandLandmarker handLandmarker;
-    private ExecutorService cameraExecutor;
-    private ImageAnalysis imageAnalysis;
     private SharedPreferences preferences;
-    private volatile long lastActionAt = 0;
-    private volatile String lastGesture = "";
+    private TextView status;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        cameraExecutor = Executors.newSingleThreadExecutor();
         buildScreen();
-        try {
-            BaseOptions baseOptions = BaseOptions.builder().setModelAssetPath("hand_landmarker.task").build();
-            HandLandmarker.HandLandmarkerOptions options = HandLandmarker.HandLandmarkerOptions.builder()
-                    .setBaseOptions(baseOptions).setRunningMode(RunningMode.VIDEO).setNumHands(1)
-                    .setMinHandDetectionConfidence(0.60f).setMinHandPresenceConfidence(0.60f)
-                    .setMinTrackingConfidence(0.60f).build();
-            handLandmarker = HandLandmarker.createFromOptions(this, options);
-        } catch (Exception e) {
-            showStatus("Hand model could not load: " + e.getMessage());
-            return;
-        }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            startCamera();
-        } else {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, CAMERA_REQUEST);
-        }
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        refreshStatus();
     }
 
     private void buildScreen() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(16, 12, 16, 12);
+        root.setPadding(18, 14, 18, 14);
         root.setBackgroundColor(0xFF101014);
 
         TextView title = new TextView(this);
@@ -102,18 +66,33 @@ public class MainActivity extends AppCompatActivity {
         title.setTextColor(0xFFFFFFFF);
         title.setTextSize(21);
         title.setGravity(Gravity.CENTER);
-        root.addView(title, new LinearLayout.LayoutParams(-1, 48));
+        root.addView(title, new LinearLayout.LayoutParams(-1, 52));
 
         status = new TextView(this);
-        status.setText("Preparing hand tracking...");
         status.setTextColor(0xFFB8E6FF);
         status.setTextSize(14);
         status.setGravity(Gravity.CENTER);
-        root.addView(status, new LinearLayout.LayoutParams(-1, 58));
+        root.addView(status, new LinearLayout.LayoutParams(-1, 54));
 
-        previewView = new PreviewView(this);
-        previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
-        root.addView(previewView, new LinearLayout.LayoutParams(-1, 0, 1));
+        Button start = new Button(this);
+        start.setText("START FLOATING HAND CONTROL");
+        start.setOnClickListener(v -> requestStart());
+        root.addView(start, new LinearLayout.LayoutParams(-1, 52));
+
+        Button stop = new Button(this);
+        stop.setText("STOP HAND CONTROL");
+        stop.setOnClickListener(v -> stopControl());
+        root.addView(stop, new LinearLayout.LayoutParams(-1, 48));
+
+        Button accessibility = new Button(this);
+        accessibility.setText("ENABLE PHONE CONTROL (ACCESSIBILITY)");
+        accessibility.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        root.addView(accessibility, new LinearLayout.LayoutParams(-1, 48));
+
+        Button overlay = new Button(this);
+        overlay.setText("ALLOW FLOATING INDICATOR");
+        overlay.setOnClickListener(v -> requestOverlayPermission());
+        root.addView(overlay, new LinearLayout.LayoutParams(-1, 48));
 
         TextView heading = new TextView(this);
         heading.setText("CUSTOM GESTURE ACTIONS");
@@ -133,8 +112,7 @@ public class MainActivity extends AppCompatActivity {
                     android.R.layout.simple_spinner_item, ACTION_LABELS);
             adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
             spinner.setAdapter(adapter);
-            int saved = actionIndex(preferences.getString(key, defaultAction(key)));
-            spinner.setSelection(saved);
+            spinner.setSelection(actionIndex(preferences.getString(key, defaultAction(key))));
             spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
                 @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
                     preferences.edit().putString(key, ACTIONS[position]).apply();
@@ -144,26 +122,79 @@ public class MainActivity extends AppCompatActivity {
             root.addView(spinner, new LinearLayout.LayoutParams(-1, 46));
         }
 
-        Button accessibility = new Button(this);
-        accessibility.setText("Enable phone control (Accessibility)");
-        accessibility.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        root.addView(accessibility, new LinearLayout.LayoutParams(-1, 48));
+        TextView note = new TextView(this);
+        note.setText("Keep the service running from the Start button. Android will show a camera-use notification while hand tracking is active. Tap the floating hand to pause or resume actions; drag it to move it.");
+        note.setTextColor(0xFFAAAAAA);
+        note.setTextSize(12);
+        note.setPadding(2, 12, 2, 8);
+        root.addView(note);
 
-        Button pause = new Button(this);
-        pause.setText("Pause / Resume hand control");
-        pause.setOnClickListener(v -> {
-            boolean enabled = preferences.getBoolean("enabled", true);
-            preferences.edit().putBoolean("enabled", !enabled).apply();
-            showStatus(!enabled ? "Gesture actions enabled." : "Gesture actions paused.");
-        });
-        root.addView(pause, new LinearLayout.LayoutParams(-1, 48));
         setContentView(root);
+    }
+
+    private void requestStart() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, CAMERA_REQUEST);
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            requestOverlayPermission();
+            return;
+        }
+        startControlService();
+    }
+
+    private void requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName()));
+            startActivityForResult(intent, OVERLAY_REQUEST);
+        } else {
+            refreshStatus();
+        }
+    }
+
+    private void startControlService() {
+        Intent intent = new Intent(this, GestureCameraService.class);
+        intent.setAction(GestureCameraService.ACTION_START);
+        ContextCompat.startForegroundService(this, intent);
+        status.setText("Starting background camera and floating indicator...");
+    }
+
+    private void stopControl() {
+        stopService(new Intent(this, GestureCameraService.class));
+        status.setText("Hand control stopped.");
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == CAMERA_REQUEST && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+            requestStart();
+        } else if (requestCode == CAMERA_REQUEST) {
+            status.setText("Camera permission is required for hand tracking.");
+        }
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == OVERLAY_REQUEST) {
+            if (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)) startControlService();
+            else status.setText("Floating indicator permission was not granted.");
+        }
+    }
+
+    private void refreshStatus() {
+        if (status == null) return;
+        boolean overlayAllowed = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this);
+        status.setText("Background mode: start when ready. Floating overlay permission: " +
+                (overlayAllowed ? "allowed" : "needed") + ". Accessibility must be enabled separately for phone navigation.");
     }
 
     private int actionIndex(String action) {
         for (int i = 0; i < ACTIONS.length; i++) if (ACTIONS[i].equals(action)) return i;
         return 0;
     }
+
     private String defaultAction(String gesture) {
         switch (gesture) {
             case "OPEN_PALM": return "NOTIFICATIONS";
@@ -173,97 +204,5 @@ public class MainActivity extends AppCompatActivity {
             case "THREE_FINGERS": return "SCREENSHOT";
             default: return "NONE";
         }
-    }
-
-    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
-        super.onRequestPermissionsResult(requestCode, permissions, results);
-        if (requestCode == CAMERA_REQUEST && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) startCamera();
-        else if (requestCode == CAMERA_REQUEST) showStatus("Camera permission is required for hand tracking.");
-    }
-
-    private void startCamera() {
-        ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(this);
-        future.addListener(() -> {
-            try {
-                ProcessCameraProvider provider = future.get();
-                Preview preview = new Preview.Builder().build();
-                preview.setSurfaceProvider(previewView.getSurfaceProvider());
-                imageAnalysis = new ImageAnalysis.Builder().setTargetResolution(new Size(640, 480))
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888).build();
-                imageAnalysis.setAnalyzer(cameraExecutor, this::analyseFrame);
-                provider.unbindAll();
-                provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, preview, imageAnalysis);
-                showStatus("Camera ready. Try an open palm, fist, peace sign or point.");
-            } catch (Exception e) { showStatus("Camera could not start: " + e.getMessage()); }
-        }, ContextCompat.getMainExecutor(this));
-    }
-
-    private void analyseFrame(ImageProxy image) {
-        Bitmap source = null, upright = null;
-        try {
-            if (handLandmarker == null) return;
-            source = image.toBitmap();
-            int rotation = image.getImageInfo().getRotationDegrees();
-            if (rotation == 0) upright = source;
-            else {
-                Matrix matrix = new Matrix(); matrix.postRotate(rotation);
-                upright = Bitmap.createBitmap(source, 0, 0, source.getWidth(), source.getHeight(), matrix, true);
-            }
-            HandLandmarkerResult result = handLandmarker.detectForVideo(
-                    new BitmapImageBuilder(upright).build(), System.nanoTime() / 1_000_000L);
-            List<List<NormalizedLandmark>> hands = result.landmarks();
-            if (hands.isEmpty()) {
-                lastGesture = "";
-                showStatus("No hand detected. Keep your hand inside the camera frame.");
-            } else {
-                String gesture = classify(hands.get(0));
-                showStatus("Detected: " + gesture.replace('_', ' ') + "  |  Actions " +
-                        (preferences.getBoolean("enabled", true) ? "ON" : "PAUSED"));
-                if (!gesture.equals("UNKNOWN")) maybeRunAction(gesture);
-            }
-        } catch (Exception e) { showStatus("Tracking error: " + e.getMessage()); }
-        finally {
-            if (upright != null && upright != source) upright.recycle();
-            if (source != null) source.recycle();
-            image.close();
-        }
-    }
-
-    private String classify(List<NormalizedLandmark> p) {
-        boolean index = p.get(8).y() < p.get(6).y();
-        boolean middle = p.get(12).y() < p.get(10).y();
-        boolean ring = p.get(16).y() < p.get(14).y();
-        boolean pinky = p.get(20).y() < p.get(18).y();
-        int count = (index ? 1 : 0) + (middle ? 1 : 0) + (ring ? 1 : 0) + (pinky ? 1 : 0);
-        if (count == 4) return "OPEN_PALM";
-        if (count == 0) return "FIST";
-        if (index && middle && !ring && !pinky) return "PEACE";
-        if (index && !middle && !ring && !pinky) return "POINT";
-        if (index && middle && ring && !pinky) return "THREE_FINGERS";
-        return "UNKNOWN";
-    }
-
-    private void maybeRunAction(String gesture) {
-        if (!preferences.getBoolean("enabled", true)) return;
-        long now = System.currentTimeMillis();
-        if (now - lastActionAt < 1400 || gesture.equals(lastGesture)) return;
-        lastGesture = gesture;
-        lastActionAt = now;
-        String action = preferences.getString(gesture, defaultAction(gesture));
-        if ("NONE".equals(action)) return;
-        boolean ok = GestureActionController.perform(this, action);
-        if (!ok) showStatus("Action not sent. Enable Accessibility control, or check the action's Android permission.");
-    }
-
-    private void showStatus(String message) {
-        runOnUiThread(() -> { if (status != null) status.setText(message); });
-    }
-
-    @Override protected void onDestroy() {
-        if (imageAnalysis != null) imageAnalysis.clearAnalyzer();
-        if (cameraExecutor != null) cameraExecutor.shutdown();
-        if (handLandmarker != null) handLandmarker.close();
-        super.onDestroy();
     }
 }
