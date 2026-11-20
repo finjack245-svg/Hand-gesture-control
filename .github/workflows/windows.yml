@@ -1,0 +1,44 @@
+name: Windows Desktop Build
+
+on:
+  push:
+    branches: ["main", "feature/windows-desktop"]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: desktop/requirements.txt
+      - name: Install desktop dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r desktop/requirements.txt
+          python -m pip install pyinstaller==6.11.1
+      - name: Run desktop gesture tests
+        run: python -m unittest discover -s desktop/tests -v
+      - name: Package Windows application
+        run: |
+          pyinstaller --noconfirm --clean --onedir --console --name HandGestureControl --collect-all mediapipe --collect-all cv2 --collect-all pyautogui desktop/app.py
+      - name: Include editable gesture map
+        run: Copy-Item desktop/gesture-map.example.json dist/HandGestureControl/gesture-map.json
+      - name: Upload Windows desktop app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hand-Gesture-Control-Windows
+          path: dist/HandGestureControl/
+          if-no-files-found: error
+          retention-days: 14
