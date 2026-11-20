@@ -11,7 +11,7 @@ import cv2
 import mediapipe as mp
 import pyautogui
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "gesture-map.json"
 DEFAULTS = {
     "OPEN_PALM": "PAUSE_TOGGLE",
@@ -132,7 +132,7 @@ def main():
     stable_gesture = "UNKNOWN"
     stable_frames = 0
     fired_for_pose = False
-    print("Hand Gesture Control started. Q/Esc = quit; P = pause/resume; F8 = emergency pause.")
+    print("Hand Gesture Control started. Q/Esc = quit; P = pause/resume.")
     try:
         with mp_hands.Hands(
             static_image_mode=False, max_num_hands=1,
@@ -167,7 +167,7 @@ def main():
                 state = "ACTIVE" if actions.enabled else "PAUSED"
                 cv2.putText(frame, f"{gesture} | {state}", (12, 32),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.75, (40, 230, 160), 2)
-                cv2.putText(frame, "Q: quit   P: pause/resume   F8: emergency pause",
+                cv2.putText(frame, "Q: quit   P: pause/resume",
                             (12, height - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (245, 245, 245), 1)
                 cv2.imshow("Hand Gesture Control - Windows", frame)
                 key = cv2.waitKey(1) & 0xFF
@@ -176,8 +176,6 @@ def main():
                 if key == ord("p"):
                     actions.enabled = not actions.enabled
                     stable_gesture, stable_frames, fired_for_pose = "UNKNOWN", 0, False
-                if key == 0x71:  # F8 (OpenCV backend key code)
-                    actions.enabled = False
     except pyautogui.FailSafeException:
         print("Emergency stop: mouse moved to a screen corner. Controls paused.")
     finally:
