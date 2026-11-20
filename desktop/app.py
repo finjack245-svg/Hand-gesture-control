@@ -84,7 +84,7 @@ class DesktopActions:
         now = time.monotonic()
         if action == "MOVE_CURSOR":
             return
-        if gesture == self.last_gesture or now - self.last_action < 1.25:
+        if now - self.last_action < 1.25:
             return
         self.last_gesture = gesture
         self.last_action = now
