@@ -157,8 +157,9 @@ def main():
                         stable_frames += 1
                     else:
                         stable_gesture, stable_frames, fired_for_pose = gesture, 1, False
-                    if stable_frames >= 7 and not fired_for_pose and actions.enabled:
-                        actions.run(gesture, mapping.get(gesture, "NONE"))
+                    configured_action = mapping.get(gesture, "NONE")
+                    if stable_frames >= 7 and not fired_for_pose and (actions.enabled or configured_action == "PAUSE_TOGGLE"):
+                        actions.run(gesture, configured_action)
                         fired_for_pose = True
                 else:
                     stable_gesture, stable_frames, fired_for_pose = "UNKNOWN", 0, False
